@@ -1,4 +1,4 @@
-# sdnext-benchmark
+# sdnext-worker
 
 This project provides a pattern for creating benchmarks with an sdnext container. This example uses a preconfigured [Stable Diffusion XL 1.0 image](https://hub.docker.com/r/saladtechnologies/sdnext-sdxl10).
 
@@ -8,13 +8,12 @@ To get started with this project, you will need to have Docker installed on your
 
 ```bash
 docker run --gpus all \
--e BENCHMARK_SIZE=10 \
 -e REPORTING_URL=https://someurl.com \
 -e REPORTING_API_KEY=1234567890 \
--e BENCHMARK_ID=sdxl-benchmark-0 \
-saladtechnologies/sdxl-benchmark:latest
+-e REPORTING_AUTH_HEADER="X-Api-Key" \
+-e QUEUE_URL=https://someurl.com/ \
+<your_docker_hub_username>/sdnext-worker:latest
 ```
-
 or
 
 ```bash
@@ -28,9 +27,14 @@ The `BENCHMARK_SIZE` environment variables can be adjusted to change the size of
 To build the image, run the following command:
 
 ```bash
-docker buildx build \
--t saladtechnologies/sdxl-benchmark:latest \
---provenance=false \
---output type=docker \
-.
+docker buildx build -t sdnext-worker:latest --provenance=false --output type=docker .
+```
+
+NB; this will take a while to complete. If you use e.g. MacOS, you might want to run this under `caffeinate -is`.
+
+## Publishing the image to Dockerhub
+
+```bash
+docker tag sdnext-worker:latest <your_docker_hub_username>/sdnext-worker:latest
+docker push <your_docker_hub_username>/sdnext-worker:latest
 ```

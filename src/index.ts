@@ -1,26 +1,25 @@
-import { 
-  Text2ImageRequest, 
-  Text2ImageResponse, 
-  ServerStatus, 
-  SDJob, 
-  GetJobFromQueueResponse, 
-  DeleteQueueMessageResponse 
+import {
+  Text2ImageRequest,
+  ServerStatus,
+  SDJob,
+  GetJobFromQueueResponse,
+  DeleteQueueMessageResponse,
+  InpaintingRequest,
+  Image2ImageRequest,
+  Response
 } from "./types";
 import { exec } from "node:child_process";
 import os from "node:os";
 
 const {
-  SDNEXT_URL = "http://127.0.0.1:7860", 
-  BENCHMARK_SIZE = "10", 
+  METHODS = ["txt2img", "img2img"],
+  SDNEXT_URL = "http://127.0.0.1:7860",
   REPORTING_URL = "http://localhost:3000",
-  REPORTING_AUTH_HEADER = "Benchmark-Api-Key",
+  REPORTING_AUTH_HEADER = "X-Api-Key",
   REPORTING_API_KEY = "abc1234567890",
-  BENCHMARK_ID = "test",
   QUEUE_URL = "http://localhost:3001",
-  QUEUE_NAME = "test",
+  WEBHOOK_CALLBACK_URL = "https://onlyfakes.app/.netlify/functions/handleWebhookResponseGeneration"  // TODO now hardcoded
 } = process.env;
-
-const benchmarkSize = parseInt(BENCHMARK_SIZE, 10);
 
 /**
  * This is the job that will be submitted to the server,
@@ -28,32 +27,22 @@ const benchmarkSize = parseInt(BENCHMARK_SIZE, 10);
  * 
  * You can change this to whatever you want, and there are a lot
  * of options. See the SDNext API docs for more info.
+ *
+ *  All models have text2image and image2image endpoints. Only inpaingting models have inpainting endpoint.
  */
-const testJob: Text2ImageRequest = {
+const txt2imgTestJob: Text2ImageRequest = {
+  model_id: "test-model",
+  track_id: "test-track",
   prompt: "cat",
-
-  // We want to run the base model for 20 steps
   steps: 20,
   width: 1216,
+  method: "txt2img",
   height: 896,
-  send_images: true,
-  cfg_scale: 7,
-
-  /**
-   * We want to run the refiner for 15 steps, starting at step 20.
-   * This requires enabling high resolution, but setting the upscaler to "None".
-   *  */ 
-  enable_hr: true,
-  hr_upscaler: "None",
-  
-  /**
-   * The number of steps run by the refiner is, for some reason,
-   * equal to denoising_strength * hr_second_pass_steps.
-   */
-  refiner_start: 20,
-  denoising_strength: 0.43,
-  hr_second_pass_steps: 35,
+  cfg_scale: 7
 };
+
+// TODO img2ImgTestJob
+// All models that have txt2img also have img2img endpoint, so the testing is not that crucial.
 
 
 /**
@@ -100,7 +89,7 @@ async function recordResult(result: {
     MemGB: number,
     gpu: string
   }}): Promise<void> {
-  const url = new URL("/" + BENCHMARK_ID, REPORTING_URL);
+  const url = new URL("/" + REPORTING_URL);
   await fetch(url.toString(), {
     method: "POST",
     body: JSON.stringify(result),
@@ -118,8 +107,8 @@ async function recordResult(result: {
  * 
  * @returns A job to submit to the server
  */
-async function getJob(): Promise<{request: Text2ImageRequest, messageId: string, uploadUrls: string[], jobId: string } | null> {
-  const url = new URL("/" + QUEUE_NAME, QUEUE_URL);
+async function getJob(): Promise<{request: Text2ImageRequest | Image2ImageRequest | InpaintingRequest, messageId: string, uploadUrls: string[], jobId: string } | null> {
+  const url = new URL(QUEUE_URL);
   const response = await fetch(url.toString(), {
     method: "GET",
     headers: {
@@ -138,12 +127,11 @@ async function getJob(): Promise<{request: Text2ImageRequest, messageId: string,
       jobId: job.id,
       /**
        * We only take the prompt and batch size from the job.
-       * The rest of the job is set to the default values.
-       *  */ 
+       *  */
+      // TODO now hardcoded to be txt2img test job
       request: {
-        ...testJob,
-        prompt: job.prompt,
-        batch_size: job.batch_size,
+        ...txt2imgTestJob,
+        prompt: job.prompt
       },
 
       /**
@@ -170,7 +158,7 @@ async function getJob(): Promise<{request: Text2ImageRequest, messageId: string,
  * @returns 
  */
 async function markJobComplete(messageId: string): Promise<DeleteQueueMessageResponse> {
-  const url = new URL(`/${QUEUE_NAME}/${encodeURIComponent(messageId)}`, QUEUE_URL);
+  const url = new URL(`/${encodeURIComponent(messageId)}`, QUEUE_URL);
   const response = await fetch(url.toString(), {
     method: "DELETE",
     headers: {
@@ -187,7 +175,7 @@ async function markJobComplete(messageId: string): Promise<DeleteQueueMessageRes
  * @param job The job to submit to the server
  * @returns The response from the server
  */
-async function submitJob(job: Text2ImageRequest): Promise<Text2ImageResponse> {
+async function submitText2ImageJob(job: Text2ImageRequest): Promise<Response> {
   // POST to SDNEXT_URL
   const url = new URL("/sdapi/v1/txt2img", SDNEXT_URL);
   const response = await fetch(url.toString(), {
@@ -199,7 +187,36 @@ async function submitJob(job: Text2ImageRequest): Promise<Text2ImageResponse> {
   });
 
   const json = await response.json();
-  return json as Text2ImageResponse;
+  return json as Response;
+}
+
+async function submitImage2ImageJob(job: Image2ImageRequest): Promise<Response> {
+  const url = new URL("/sdapi/v1/img2img", SDNEXT_URL);
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    body: JSON.stringify(job),
+    headers: {
+      "Content-Type": "application/json"
+    },
+  });
+
+  const json = await response.json();
+  return json as Response;
+}
+
+// Inpainting job uses the same API as image2image
+async function submitInpaintingJob(job: InpaintingRequest): Promise<Response> {
+  const url = new URL("/sdapi/v1/img2img", SDNEXT_URL);
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    body: JSON.stringify(job),
+    headers: {
+      "Content-Type": "application/json"
+    },
+  });
+
+  const json = await response.json();
+  return json as Response;
 }
 
 /**
@@ -261,7 +278,7 @@ async function enableRefiner(): Promise<void> {
   });
 }
 
-async function sleep(ms: number): Promise<void> {
+async function sleep(ms: number): Promise<unknown> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
@@ -282,7 +299,7 @@ process.on("exit", () => {
  * Waits for the SDNext server to start listening at the configured URL.
  */
 async function waitForServerToStart(): Promise<void> {
-  const maxAttempts = 300;
+  const maxAttempts = 600;
   let attempts = 0;
   while (stayAlive && attempts++ < maxAttempts) {
     try {
@@ -314,7 +331,7 @@ async function waitForModelToLoad(): Promise<void> {
       }
         
       console.log(`(${attempts}/${maxAttempts}) Waiting for model to load...`);
-    } catch(e: any) {
+    } catch(e) {
       
       failures++;
       if (failures > maxFailures) {
@@ -328,6 +345,29 @@ async function waitForModelToLoad(): Promise<void> {
   throw new Error("Timed out waiting for model to load");
 }
 
+async function notifyWebhook(track_id: string, sample_images: string[]) {
+  try {
+    const response = await fetch(WEBHOOK_CALLBACK_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        "track_id": track_id,
+        "sample_images": sample_images
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Error: ${response.statusText}`);
+    }
+
+    const responseData = await response.json();
+    console.log("Webhook notified successfully:", responseData);
+  } catch (error: any) {
+    console.error("Failed to notify webhook:", error.message);
+  }
+}
 
 
 /**
@@ -339,40 +379,48 @@ async function waitForModelToLoad(): Promise<void> {
 const prettyPrint = (obj: any): void => console.log(JSON.stringify(obj, null, 2));
 
 /**
- * This is the main function that runs the benchmark.
+ * This is the main function that runs the worker.
  */
 async function main(): Promise<void> {
   /**
-   * We get the GPU type and system info before we start the benchmark.
+   * We get the GPU type and system info before we start the worker.
    * We intentionally do not put this in a try/catch block, because if it fails,
    * it means there isn't a gpu available, and we want to fail fast.
    */
-  const gpu = await getGpuType();
-  const systemInfo = {...getSystemInfo(), gpu };
-  console.log("System Info:", JSON.stringify(systemInfo));
 
-  const loadStart = Date.now();
+  let response;
+  let systemInfo: never;
+  try {
+    const loadStart = Date.now();
+    const gpu = await getGpuType();
+    const systemInfo = {...getSystemInfo(), gpu };
+    console.log("System Info:", JSON.stringify(systemInfo));
 
-  /**
-   * This is where we wait for the server to start and the model to load.
-   * It can take several minutes.
-   */
-  await waitForServerToStart();
-  await waitForModelToLoad();
-  await enableRefiner();
+    /**
+     * This is where we wait for the server to start and the model to load.
+     * It can take several minutes.
+     */
+    await waitForServerToStart();
+    await waitForModelToLoad();
+    await enableRefiner();
 
-  /**
-   * We run a single job to verify that everything is working.
-   */
-  let response = await submitJob(testJob);
+    /**
+     * We run a single job to verify that everything is working.
+     */
+    if (METHODS.indexOf("txt2img") !== -1) {
+      response = await submitText2ImageJob(txt2imgTestJob);
+    }
 
-  const loadEnd = Date.now();
-  const loadElapsed = loadEnd - loadStart;
-  console.log(`Server fully warm in ${loadElapsed}ms`);
+    const loadEnd = Date.now();
+    const loadElapsed = loadEnd - loadStart;
+    console.log(`Server fully warm in ${loadElapsed}ms`);
+  } catch (error) {
+    console.error("Failed to initialize:", error);
+    // Handle initialization failure (e.g., exit the process or retry initialization)
+    process.exit(1); // Or any other logic you deem appropriate
+  }
 
-  let numImages = 0;
-  const start = Date.now();
-  while (stayAlive && (benchmarkSize < 0 || numImages < benchmarkSize)) {
+  while (stayAlive) {
     console.log("Fetching Job...");
     const job = await getJob();
 
@@ -386,41 +434,57 @@ async function main(): Promise<void> {
 
     console.log("Submitting Job...");
     const jobStart = Date.now();
-    response = await submitJob(request);
+
+    switch(request.method) {
+    case "txt2img":
+      response = await submitText2ImageJob(request);
+      break;
+    case "img2img":
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      //@ts-ignore
+      response = await submitImage2ImageJob(request);
+      break;
+    case "inpainting":
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      //@ts-ignore
+      response = await submitInpaintingJob(request);
+      break;
+    }
     const jobEnd = Date.now();
     const jobElapsed = jobEnd - jobStart;
-    console.log(`${response.images.length} images generated in ${jobElapsed}ms`);
-    
-    numImages += response.images.length;
+    console.log(`${response?.images?.length || 0} images generated in ${jobElapsed}ms`);
 
     /**
      * By not awaiting this, we can get started on the next job
      * while the images are uploading.
      */
-    Promise.all(response.images.map((image, i) => {
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    //@ts-ignore
+    Promise.all(response?.images?.map((image, i) => {
       return uploadImage(image, uploadUrls[i]);
     })).then(async (downloadUrls) => {
       await recordResult({
         id: jobId,
         prompt: request.prompt,
         inference_time: jobElapsed,
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        //@ts-ignore
         output_urls: downloadUrls,
         system_info: systemInfo
       });
+
+      // Now that images are uploaded and the result is recorded, notify the webhook
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      //@ts-ignore
+      await notifyWebhook(jobId, downloadUrls);
+
       return downloadUrls;
     }).then((downloadUrls) => {
       markJobComplete(messageId);
       prettyPrint({prompt: request.prompt, inference_time: jobElapsed, output_urls: downloadUrls});
     });
   }
-
-  const end = Date.now();
-  const elapsed = end - start;
-  if (benchmarkSize > 0) {
-    console.log(`Generated ${numImages} images in ${elapsed}ms`);
-    console.log(`Average time per image: ${elapsed / numImages}ms`);
-  }
 }
 
-// Start the benchmark
+// Start the worker
 main();
