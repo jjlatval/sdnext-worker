@@ -6,7 +6,7 @@ FROM node:18-slim as build
 WORKDIR /app
 
 # Install the worker dependencies
-COPY package*.json .
+COPY package*.json /app/
 RUN npm install
 COPY . .
 
@@ -24,7 +24,7 @@ FROM saladtechnologies/sdnext:dynamic
 COPY --from=build /app/worker ./worker
 
 # The inference image supports
-ENV HOST='127.0.0.1'
+ENV HOST='0.0.0.0'
 ENV PORT=7860
 
 # Override the entrypoint, as we need to launch a little differently in this context
@@ -32,17 +32,9 @@ ENTRYPOINT []
 
 # Start the inference server in the background and then run the worker
 # in the foreground.
+
 CMD [\
   "/bin/bash",\
   "-c",\
-  "${INSTALLDIR}/entrypoint.sh \
-  --listen \
-  --no-download \
-  --backend diffusers \
-  --use-cuda \
-  --ckpt ${CKPT} \
-  --docs \
-  --quick \
-  --server-name ${HOST} \
-  --port ${PORT} \
+  "${INSTALLDIR}/entrypoint \
   & worker/sdnext-worker"]

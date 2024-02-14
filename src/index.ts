@@ -13,7 +13,7 @@ import os from "node:os";
 
 const {
   METHODS = ["txt2img", "img2img"],
-  SDNEXT_URL = "http://127.0.0.1:7860",
+  SDNEXT_URL = "http://0.0.0.0:7860",
   REPORTING_URL = "http://localhost:3000",
   REPORTING_AUTH_HEADER = "X-Api-Key",
   REPORTING_API_KEY = "abc1234567890",
@@ -299,7 +299,7 @@ process.on("exit", () => {
  * Waits for the SDNext server to start listening at the configured URL.
  */
 async function waitForServerToStart(): Promise<void> {
-  const maxAttempts = 600;
+  const maxAttempts = 6000;
   let attempts = 0;
   while (stayAlive && attempts++ < maxAttempts) {
     try {
@@ -317,7 +317,7 @@ async function waitForServerToStart(): Promise<void> {
  * This is done by checking the logs for the "Startup time:" line.
  */
 async function waitForModelToLoad(): Promise<void> {
-  const maxAttempts = 300;
+  const maxAttempts = 600;
   const maxFailures = 10;
   let attempts = 0;
   let failures = 0;
