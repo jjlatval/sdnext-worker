@@ -1,6 +1,6 @@
 # sdnext-worker
 
-This project provides a pattern for creating benchmarks with an sdnext container. This example uses a preconfigured [Stable Diffusion XL 1.0 image](https://hub.docker.com/r/saladtechnologies/sdnext-sdxl10).
+This project uses SDNext with a Node application for taking tasks from the queue and recording results.
 
 ## Getting Started
 
