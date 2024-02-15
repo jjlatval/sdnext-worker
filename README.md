@@ -20,8 +20,6 @@ or
 docker compose up
 ```
 
-The `BENCHMARK_SIZE` environment variables can be adjusted to change the size of the benchmark (total images to generate). It can be set to `-1` in order to run the benchmark indefinitely. It should be noted that this is a per-node limit. This value is unaware of other benchmark workers that may be running.
-
 ## Build the image
 
 To build the image, run the following command:
