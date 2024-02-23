@@ -18,5 +18,8 @@
     "start": "node dist/index.js",
     "test": "mocha --recursive dist/test"
   },
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "dependencies": {
+    "@aws-sdk/client-sqs": "^3.515.0"
+  }
 }

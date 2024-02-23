@@ -1,12 +1,11 @@
+import { SQSClient, DeleteMessageCommand, ReceiveMessageCommand } from "@aws-sdk/client-sqs";
 import {
   Text2ImageRequest,
   ServerStatus,
-  SDJob,
-  GetJobFromQueueResponse,
-  DeleteQueueMessageResponse,
   InpaintingRequest,
   Image2ImageRequest,
-  Response
+  AnyRequest,
+  AnyResponse,
 } from "./types";
 import { exec } from "node:child_process";
 import os from "node:os";
@@ -18,13 +17,40 @@ const {
   REPORTING_AUTH_HEADER = "X-Api-Key",
   REPORTING_API_KEY = "abc1234567890",
   QUEUE_URL = "http://localhost:3001",
+  AWS_ACCESS_KEY_ID,
+  AWS_SECRET_ACCESS_KEY,
+  AWS_REGION,
   WEBHOOK_CALLBACK_URL = "https://onlyfakes.app/.netlify/functions/handleWebhookResponseGeneration"  // TODO now hardcoded
 } = process.env;
+
+interface JobRequest extends Partial<Text2ImageRequest & Image2ImageRequest & InpaintingRequest> {
+    track_id: string;
+    method: string;
+    upload_url: string[];
+}
+
+interface JobFetchResult {
+    jobId: string;
+    request: JobRequest;
+    messageId: string;
+    receiptHandle: string;
+    upload_url: string[];
+}
+
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+//@ts-ignore
+const sqsClient = new SQSClient({
+  region: AWS_REGION,
+  credentials: {
+    accessKeyId: AWS_ACCESS_KEY_ID,
+    secretAccessKey: AWS_SECRET_ACCESS_KEY
+  }
+});
 
 /**
  * This is the job that will be submitted to the server,
  * set to the configured batch size.
- * 
+ *
  * You can change this to whatever you want, and there are a lot
  * of options. See the SDNext API docs for more info.
  *
@@ -39,14 +65,14 @@ const txt2imgTestJob: Text2ImageRequest = {
   method: "txt2img",
   height: 896,
   cfg_scale: 7
-};
+} as Text2ImageRequest;
 
 // TODO img2ImgTestJob
 // All models that have txt2img also have img2img endpoint, so the testing is not that crucial.
 
 
 /**
- * 
+ *
  * @returns The GPU type as reported by nvidia-smi
  */
 function getGpuType() : Promise<string> {
@@ -62,7 +88,7 @@ function getGpuType() : Promise<string> {
 }
 
 /**
- * 
+ *
  * @returns The number of vCPUs and the total memory in GB
  */
 function getSystemInfo() : { vCPU: number, MemGB: number } {
@@ -72,172 +98,189 @@ function getSystemInfo() : { vCPU: number, MemGB: number } {
   return { vCPU, MemGB };
 }
 
-/**
- * You can replace this function with your own implementation.
- * Could be submitting stats to a database, or to an api, or just
- * printing to the console.
- * 
- * In this case, we're sending the results to our reporting server.
- */
-async function recordResult(result: {
-  prompt: string, 
-  id: string, 
-  inference_time: number, 
-  output_urls: string[], 
+// Combines the request and response information
+interface FullRecord {
+  track_id: string;
+  request: AnyRequest;
+  response: AnyResponse;
+  output_urls: string[];
   system_info: {
-    vCPU: number,
-    MemGB: number,
-    gpu: string
-  }}): Promise<void> {
-  const url = new URL("/" + REPORTING_URL);
-  await fetch(url.toString(), {
-    method: "POST",
-    body: JSON.stringify(result),
-    headers: {
-      "Content-Type": "application/json",
-      [REPORTING_AUTH_HEADER]: REPORTING_API_KEY,
-    },
-  });
+    vCPU: number;
+    MemGB: number;
+    gpu: string;
+  };
+}
+
+async function recordResult(record: FullRecord): Promise<void> {
+  let response;
+  try {
+    response = await fetch(REPORTING_URL, {
+      method: "POST",
+      body: JSON.stringify(record),
+      headers: {
+        "Content-Type": "application/json",
+        [REPORTING_AUTH_HEADER]: REPORTING_API_KEY,
+      },
+    });
+
+    console.log(`Response status: ${response.status} ${response.statusText}`);
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error(`Error response body: ${errorBody}`);
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+  } catch (error) {
+    console.log("RESPONSE", response);
+    console.error("Error recording result:", error);
+    throw error;
+  }
 }
 
 
 /**
  * This function gets a job from the queue, and returns it in a format that is usable
  * by the SDNext server, along with additional information needed to finish processing the job.
- * 
+ *
  * @returns A job to submit to the server
  */
-async function getJob(): Promise<{request: Text2ImageRequest | Image2ImageRequest | InpaintingRequest, messageId: string, uploadUrls: string[], jobId: string } | null> {
-  const url = new URL(QUEUE_URL);
-  const response = await fetch(url.toString(), {
-    method: "GET",
-    headers: {
-      [REPORTING_AUTH_HEADER]: REPORTING_API_KEY,
-    },
-  });
-  const queueMessage = await response.json() as GetJobFromQueueResponse;
-  if (queueMessage.messages?.length) {
-    const job = JSON.parse(queueMessage.messages[0].body) as SDJob;
+
+async function getJob(): Promise<JobFetchResult | null> {
+  const params = {
+    QueueUrl: process.env.QUEUE_URL!,
+    MaxNumberOfMessages: 1,
+    WaitTimeSeconds: 20,
+  };
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    //@ts-ignore
+    const { Messages } = await sqsClient.send(new ReceiveMessageCommand(params));
+
+    if (!Messages || Messages.length === 0) {
+      console.log("No messages available in the queue.");
+      return null;
+    }
+
+    const message = Messages[0];
+    const body = JSON.parse(message.Body!) as JobRequest;
+
+    // Optionally manipulate the job object here if needed
+    // For example, excluding 'upload_url' from the request object to be passed on,
+    // but keeping it for other uses like forming upload_urls
+
+    const { upload_url, ...requestWithoutUploadUrl } = body;
 
     return {
-      /**
-       * We need to return the jobId so we can send it to the reporting server
-       * to identify the results of the job.
-       */
-      jobId: job.id,
-      /**
-       * We only take the prompt and batch size from the job.
-       *  */
-      // TODO now hardcoded to be txt2img test job
-      request: {
-        ...txt2imgTestJob,
-        prompt: job.prompt
-      },
-
-      /**
-       * We need to return the messageId so we can delete the message
-       * from the queue when we're done with it.
-       */
-      messageId: queueMessage.messages[0].messageId,
-
-      /**
-       * We need to return the signed upload urls so we can upload the images
-       * to s3 when we're done with them.
-       */
-      uploadUrls: job.upload_url,
+      jobId: body.track_id,
+      request: requestWithoutUploadUrl as JobRequest, // This line simplifies the object to its needed form
+      messageId: message.MessageId!,
+      receiptHandle: message.ReceiptHandle!,
+      upload_url: body.upload_url,
     };
-
-  } else {
+  } catch (error) {
+    console.error("Failed to receive messages from SQS:", error);
     return null;
   }
 }
 
 /**
- * Deletes a message from the queue, indicating it does not need to be processed again.
- * @param messageId The id of the message to delete from the queue
- * @returns 
+ * Deletes a message from the SQS queue using its receipt handle, indicating the message
+ * has been successfully processed and does not need to be retained in the queue.
+ *
+ * @param receiptHandle A unique identifier for the message to be deleted. This identifier
+ *                      is different from the message's MessageId and is obtained when
+ *                      the message is received from the queue.
+ * @returns A promise that resolves when the message is successfully deleted or rejects
+ *          if an error occurs during the deletion process.
  */
-async function markJobComplete(messageId: string): Promise<DeleteQueueMessageResponse> {
-  const url = new URL(`/${encodeURIComponent(messageId)}`, QUEUE_URL);
-  const response = await fetch(url.toString(), {
-    method: "DELETE",
-    headers: {
-      [REPORTING_AUTH_HEADER]: REPORTING_API_KEY,
-    },
-  });
-  const json = await response.json() as DeleteQueueMessageResponse;
-
-  return json;
+async function markJobComplete(receiptHandle: string): Promise<void> {
+  const deleteParams = {
+    QueueUrl: QUEUE_URL, // The URL of the Amazon SQS queue from which messages are deleted.
+    ReceiptHandle: receiptHandle, // The receipt handle associated with the message to delete.
+  };
+  try {
+    // Create a new instance of the DeleteMessageCommand with the specified parameters.
+    const command = new DeleteMessageCommand(deleteParams);
+    // Send the command to the SQS client to delete the message.
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    //@ts-ignore
+    await sqsClient.send(command);
+  } catch (error) {
+    console.error("Error deleting message:", error);
+  }
 }
 
-/**
- * Submits a job to the SDNext server and returns the response.
- * @param job The job to submit to the server
- * @returns The response from the server
- */
-async function submitText2ImageJob(job: Text2ImageRequest): Promise<Response> {
-  // POST to SDNEXT_URL
-  const url = new URL("/sdapi/v1/txt2img", SDNEXT_URL);
-  const response = await fetch(url.toString(), {
-    method: "POST", 
-    body: JSON.stringify(job),
-    headers: {
-      "Content-Type": "application/json"
-    },
-  });
-
-  const json = await response.json();
-  return json as Response;
+async function fetchImageAsBase64(url: string): Promise<string> {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to fetch ${url}: ${response.statusText}`);
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  return buffer.toString("base64");
 }
 
-async function submitImage2ImageJob(job: Image2ImageRequest): Promise<Response> {
-  const url = new URL("/sdapi/v1/img2img", SDNEXT_URL);
+
+async function submitJob<TRequest extends AnyRequest, TResponse extends AnyResponse>(job: TRequest): Promise<TResponse> {
+  // Check if the job requires converting init_images URLs to base64
+  if ("init_images" in job && Array.isArray(job.init_images)) {
+    // Convert all init_images URLs to base64 strings
+    const base64Images = await Promise.all(job.init_images.map(url => fetchImageAsBase64(url)));
+    // Update the job with base64 encoded images
+    job = { ...job, init_images: base64Images } as TRequest;
+  }
+
+  const endpointMap: { [key: string]: string } = {
+    "txt2img": "/sdapi/v1/txt2img",
+    "img2img": "/sdapi/v1/img2img",
+    "inpainting": "/sdapi/v1/img2img",
+  };
+
+  const endpoint = endpointMap[job.method as keyof typeof endpointMap];
+  const url = new URL(endpoint, SDNEXT_URL);
+
   const response = await fetch(url.toString(), {
     method: "POST",
     body: JSON.stringify(job),
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: { "Content-Type": "application/json" },
   });
 
-  const json = await response.json();
-  return json as Response;
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+  return response.json() as Promise<TResponse>;
 }
 
-// Inpainting job uses the same API as image2image
-async function submitInpaintingJob(job: InpaintingRequest): Promise<Response> {
-  const url = new URL("/sdapi/v1/img2img", SDNEXT_URL);
-  const response = await fetch(url.toString(), {
-    method: "POST",
-    body: JSON.stringify(job),
-    headers: {
-      "Content-Type": "application/json"
-    },
-  });
-
-  const json = await response.json();
-  return json as Response;
-}
 
 /**
  * Uploads an image to s3 using the signed url provided by the job
  * @param image The image to upload, base64 encoded
  * @param url The signed url to upload the image to
- * 
+ *
  * @returns The download url of the uploaded image
  */
 async function uploadImage(image: string, url: string): Promise<string> {
-  await fetch(url, {
-    method: "PUT",
-    body: Buffer.from(image, "base64"),
-    headers: {
-      "Content-Type": "image/jpeg",
-    },
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "PUT",
+      body: Buffer.from(image, "base64"),
+      headers: {
+        "Content-Type": "image/jpeg",
+      },
+    });
 
-  // Return the full url, minus the query string
-  return url.split("?")[0];
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    // Return the full URL, minus the query string
+    return url.split("?")[0];
+  } catch (error) {
+    console.error("Upload failed:", error);
+    return ""; // or handle the error appropriately
+  }
 }
+
 
 /**
  * Uses the status endpoint to get the status of the SDNext server.
@@ -306,7 +349,7 @@ async function waitForServerToStart(): Promise<void> {
       await getServerStatus();
       return;
     } catch (e) {
-      console.log(`(${attempts}/${maxAttempts}) Waiting for server to start...`);
+      // console.log(`(${attempts}/${maxAttempts}) Waiting for server to start...`);
       await sleep(1000);
     }
   }
@@ -329,17 +372,17 @@ async function waitForModelToLoad(): Promise<void> {
       } else if (logLines.length > 0) {
         // prettyPrint(logLines);
       }
-        
+
       console.log(`(${attempts}/${maxAttempts}) Waiting for model to load...`);
     } catch(e) {
-      
+
       failures++;
       if (failures > maxFailures) {
         throw e;
       }
       console.log(`(${failures}/${maxFailures}) Request failed. Retrying...`);
     }
-    
+
     await sleep(1000);
   }
   throw new Error("Timed out waiting for model to load");
@@ -362,8 +405,7 @@ async function notifyWebhook(track_id: string, sample_images: string[]) {
       throw new Error(`Error: ${response.statusText}`);
     }
 
-    const responseData = await response.json();
-    console.log("Webhook notified successfully:", responseData);
+    await response.json();
   } catch (error: any) {
     console.error("Failed to notify webhook:", error.message);
   }
@@ -374,7 +416,7 @@ async function notifyWebhook(track_id: string, sample_images: string[]) {
  * This is a helper function to pretty print an object,
  * useful for debugging.
  * @param obj The object to pretty print
- * @returns 
+ * @returns
  */
 const prettyPrint = (obj: any): void => console.log(JSON.stringify(obj, null, 2));
 
@@ -388,7 +430,7 @@ async function main(): Promise<void> {
    * it means there isn't a gpu available, and we want to fail fast.
    */
 
-  let response;
+  let response: AnyResponse;
   let systemInfo: never;
   try {
     const loadStart = Date.now();
@@ -407,10 +449,7 @@ async function main(): Promise<void> {
     /**
      * We run a single job to verify that everything is working.
      */
-    if (METHODS.indexOf("txt2img") !== -1) {
-      response = await submitText2ImageJob(txt2imgTestJob);
-    }
-
+    response = await submitJob(txt2imgTestJob);
     const loadEnd = Date.now();
     const loadElapsed = loadEnd - loadStart;
     console.log(`Server fully warm in ${loadElapsed}ms`);
@@ -430,26 +469,33 @@ async function main(): Promise<void> {
       continue;
     }
 
-    const { request, messageId, uploadUrls, jobId } = job;
+    let request: AnyRequest;
+    switch (job.request.method) {
+    case "txt2img":
+      request = {
+        ...job.request,
+        // Assume default values or transform as necessary
+        // Ensure all required properties for Text2ImageRequest are provided
+      } as Text2ImageRequest;
+      break;
+    case "img2img":
+      request = {
+        ...job.request,
+        // Ensure all required properties for Image2ImageRequest are provided
+      } as Image2ImageRequest;
+      break;
+      // Add cases for other methods as necessary
+    default:
+      console.error("Unsupported job method:", job.request.method);
+      continue; // Skip to the next iteration if method is unsupported
+    }
+
+
+    const { messageId, receiptHandle, jobId } = job;
 
     console.log("Submitting Job...");
     const jobStart = Date.now();
-
-    switch(request.method) {
-    case "txt2img":
-      response = await submitText2ImageJob(request);
-      break;
-    case "img2img":
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      //@ts-ignore
-      response = await submitImage2ImageJob(request);
-      break;
-    case "inpainting":
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      //@ts-ignore
-      response = await submitInpaintingJob(request);
-      break;
-    }
+    response = await submitJob(request);
     const jobEnd = Date.now();
     const jobElapsed = jobEnd - jobStart;
     console.log(`${response?.images?.length || 0} images generated in ${jobElapsed}ms`);
@@ -458,29 +504,38 @@ async function main(): Promise<void> {
      * By not awaiting this, we can get started on the next job
      * while the images are uploading.
      */
+    const images = response?.images || [];
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     //@ts-ignore
-    Promise.all(response?.images?.map((image, i) => {
-      return uploadImage(image, uploadUrls[i]);
-    })).then(async (downloadUrls) => {
-      await recordResult({
-        id: jobId,
-        prompt: request.prompt,
-        inference_time: jobElapsed,
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        //@ts-ignore
-        output_urls: downloadUrls,
-        system_info: systemInfo
-      });
-
-      // Now that images are uploaded and the result is recorded, notify the webhook
+    Promise.all(images.map((image, i) => {
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       //@ts-ignore
-      await notifyWebhook(jobId, downloadUrls);
+      return uploadImage(image, job.upload_url[i]);
+    })).then(async (downloadUrls) => {
+      if (downloadUrls.length === 0) {
+        console.log("No download URLs");
+      } else {
+        const fullRecord: FullRecord = {
+          track_id: jobId,
+          request: request,
+          response: response,
+          system_info: systemInfo,
+          output_urls: downloadUrls
+        };
+        await recordResult(fullRecord);
 
+        // Now that images are uploaded and the result is recorded, notify the webhook
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        //@ts-ignore
+        try {
+          await notifyWebhook(jobId as string, downloadUrls);
+        } catch(error) {
+          console.log("Failed to notify webhook:", error);
+        }
+      }
       return downloadUrls;
-    }).then((downloadUrls) => {
-      markJobComplete(messageId);
+    }).then(async (downloadUrls) => {
+      await markJobComplete(job.receiptHandle);
       prettyPrint({prompt: request.prompt, inference_time: jobElapsed, output_urls: downloadUrls});
     });
   }

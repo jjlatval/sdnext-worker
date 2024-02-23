@@ -10,6 +10,7 @@ interface BaseRequest {
   seed?: number;
   cfg_scale: number;
   track_id: string;
+  upload_url: string[];
 }
 
 interface BaseGenerationRequest extends BaseRequest {
@@ -39,6 +40,9 @@ export interface Response {
   sample_images?: string[];  // This is what will be sent to Onlyfakes
   images?: string[];  // This is what SDNext returns
 }
+
+export type AnyRequest = Text2ImageRequest | Image2ImageRequest | InpaintingRequest;
+export type AnyResponse = Response;
 
 export interface OverrideSettings {}
 
@@ -174,18 +178,10 @@ export type QueueMessage = {
   body: string;
 };
 
-export type GetJobFromQueueResponse = {
-  status: string;
-  messages: QueueMessage[];
-};
-
 export type SDJob = {
   prompt: string;
   id: string;
+  track_id: string;
   batch_size: number;
   upload_url: string[];
-};
-
-export type DeleteQueueMessageResponse = {
-  message: "Message deleted";
 };
