@@ -12,6 +12,7 @@ import os from "node:os";
 
 const {
   METHODS = ["txt2img", "img2img"],
+  LOAD_REFINER = "0",
   SDNEXT_URL = "http://0.0.0.0:7860",
   REPORTING_URL = "http://localhost:3000",
   REPORTING_AUTH_HEADER = "X-Api-Key",
@@ -218,7 +219,6 @@ async function fetchImageAsBase64(url: string): Promise<string> {
   const buffer = Buffer.from(arrayBuffer);
   return buffer.toString("base64");
 }
-
 
 async function submitJob<TRequest extends AnyRequest, TResponse extends AnyResponse>(job: TRequest): Promise<TResponse> {
   // Check if the job requires converting init_images URLs to base64
@@ -444,7 +444,9 @@ async function main(): Promise<void> {
      */
     await waitForServerToStart();
     await waitForModelToLoad();
-    await enableRefiner();
+    if (["1", "true"].includes(String(LOAD_REFINER).toLowerCase())) {
+      await enableRefiner();
+    }
 
     /**
      * We run a single job to verify that everything is working.
@@ -515,10 +517,13 @@ async function main(): Promise<void> {
       if (downloadUrls.length === 0) {
         console.log("No download URLs");
       } else {
+        // Remove the Base64 images from the response before recording the result
+        const responseWithoutImages = { ...response };
+        delete responseWithoutImages.images;
         const fullRecord: FullRecord = {
           track_id: jobId,
           request: request,
-          response: response,
+          response: responseWithoutImages,
           system_info: systemInfo,
           output_urls: downloadUrls
         };
