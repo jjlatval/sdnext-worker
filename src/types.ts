@@ -11,7 +11,6 @@ interface BaseRequest {
   cfg_scale: number;
   track_id: string;
   upload_url: string[];
-  sd_model_checkpoint?: string;  // If this is present, it's possible to force model switch for a different model for the generation
 }
 
 interface BaseGenerationRequest extends BaseRequest {

@@ -14,15 +14,21 @@ const {
   METHODS = ["txt2img", "img2img"],
   LOAD_REFINER = "0",
   SDNEXT_URL = "http://0.0.0.0:7860",
-  REPORTING_URL = "http://localhost:3000",
+  REPORTING_URL = "",
   REPORTING_AUTH_HEADER = "X-Api-Key",
   REPORTING_API_KEY = "abc1234567890",
   QUEUE_URL = "http://localhost:3001",
+  MODEL_CHECKPOINT_NAMES = "{}",
   AWS_ACCESS_KEY_ID,
   AWS_SECRET_ACCESS_KEY,
   AWS_REGION,
-  WEBHOOK_CALLBACK_URL = "https://onlyfakes.app/.netlify/functions/handleWebhookResponseGeneration"  // TODO now hardcoded
+  WEBHOOK_CALLBACK_URL = ""
 } = process.env;
+
+let modelCheckpointNames = MODEL_CHECKPOINT_NAMES;
+if (typeof MODEL_CHECKPOINT_NAMES === "string") {
+  modelCheckpointNames = JSON.parse(modelCheckpointNames);
+}
 
 interface JobRequest extends Partial<Text2ImageRequest & Image2ImageRequest & InpaintingRequest> {
     track_id: string;
@@ -237,6 +243,23 @@ async function submitJob<TRequest extends AnyRequest, TResponse extends AnyRespo
 
   const endpoint = endpointMap[job.method as keyof typeof endpointMap];
   const url = new URL(endpoint, SDNEXT_URL);
+
+  // In case there are multiple models loaded, there might be a case to switch the model
+  console.log("MODEL CHECKPOINT NAMES", modelCheckpointNames);
+  if (Object.keys(modelCheckpointNames).length > 1) {
+    const optsUrl = new URL("/sdapi/v1/options", SDNEXT_URL);
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    //@ts-ignore
+    const optsRequest = {"sd_model_checkpoint": modelCheckpointNames[job.model_id]};
+    const modelChangeResponse = await fetch(optsUrl.toString(), {
+      method: "POST",
+      body: JSON.stringify(optsRequest),
+      headers: { "Content-Type": "application/json"}
+    });
+    if (!modelChangeResponse.ok) {
+      console.log("Could not switch model");
+    }
+  }
 
   const response = await fetch(url.toString(), {
     method: "POST",
@@ -527,15 +550,20 @@ async function main(): Promise<void> {
           system_info: systemInfo,
           output_urls: downloadUrls
         };
-        await recordResult(fullRecord);
+        if (REPORTING_URL) {
+          await recordResult(fullRecord);
+        }
 
+        console.log("WEBHOOK", WEBHOOK_CALLBACK_URL);
         // Now that images are uploaded and the result is recorded, notify the webhook
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         //@ts-ignore
-        try {
-          await notifyWebhook(jobId as string, downloadUrls);
-        } catch(error) {
-          console.log("Failed to notify webhook:", error);
+        if (WEBHOOK_CALLBACK_URL) {
+          try {
+            await notifyWebhook(jobId as string, downloadUrls);
+          } catch(error) {
+            console.log("Failed to notify webhook:", error);
+          }
         }
       }
       return downloadUrls;
