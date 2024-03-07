@@ -235,22 +235,27 @@ async function submitJob<TRequest extends AnyRequest, TResponse extends AnyRespo
     job = { ...job, init_images: base64Images } as TRequest;
   }
 
+  let adjustedJob: any = { ...job };
+  if ("num_generations" in job) {
+    const { num_generations, ...rest } = job;
+    adjustedJob = { ...rest, batch_size: num_generations };
+  }
+
   const endpointMap: { [key: string]: string } = {
     "txt2img": "/sdapi/v1/txt2img",
     "img2img": "/sdapi/v1/img2img",
     "inpainting": "/sdapi/v1/img2img",
   };
 
-  const endpoint = endpointMap[job.method as keyof typeof endpointMap];
+  const endpoint = endpointMap[adjustedJob.method as keyof typeof endpointMap];
   const url = new URL(endpoint, SDNEXT_URL);
 
   // In case there are multiple models loaded, there might be a case to switch the model
-  console.log("MODEL CHECKPOINT NAMES", modelCheckpointNames);
   if (Object.keys(modelCheckpointNames).length > 1) {
     const optsUrl = new URL("/sdapi/v1/options", SDNEXT_URL);
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     //@ts-ignore
-    const optsRequest = {"sd_model_checkpoint": modelCheckpointNames[job.model_id]};
+    const optsRequest = {"sd_model_checkpoint": modelCheckpointNames[adjustedJob.model_id]};
     const modelChangeResponse = await fetch(optsUrl.toString(), {
       method: "POST",
       body: JSON.stringify(optsRequest),
@@ -263,14 +268,14 @@ async function submitJob<TRequest extends AnyRequest, TResponse extends AnyRespo
 
   const response = await fetch(url.toString(), {
     method: "POST",
-    body: JSON.stringify(job),
+    body: JSON.stringify(adjustedJob),
     headers: { "Content-Type": "application/json" },
   });
 
   if (!response.ok) {
     throw new Error(`HTTP error! status: ${response.status}`);
   }
-  return response.json() as Promise<TResponse>;
+  return await response.json() as Promise<TResponse>;
 }
 
 
