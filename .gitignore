@@ -132,3 +132,5 @@ dist
 **/*.jpg
 benchmark-worker
 .idea/
+
+*.DS_Store

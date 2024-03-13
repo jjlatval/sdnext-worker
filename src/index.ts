@@ -9,6 +9,8 @@ import {
 } from "./types";
 import { exec } from "node:child_process";
 import os from "node:os";
+import * as fs from "fs/promises";
+import { Buffer } from "buffer";
 
 const {
   METHODS = ["txt2img", "img2img"],
@@ -77,22 +79,35 @@ const txt2imgTestJob: Text2ImageRequest = {
 // TODO img2ImgTestJob
 // All models that have txt2img also have img2img endpoint, so the testing is not that crucial.
 
+const img2imgTestJob: Image2ImageRequest = {
+  model_id: "test-model",
+  track_id: "test-track",
+  prompt: "Make an image of a woman in a forest.",
+  steps: 20,
+  width: 1216,
+  method: "img2img",
+  height: 896,
+  cfg_scale: 7,
+  init_images: ["./data/woman.png"]
+} as Image2ImageRequest;
+
 const inpaintingTestJob: InpaintingRequest = {
-    model_id: "test-model",
-    track_id: "test-track",
-    prompt: "Make the cat wear a hat.",
-    steps: 20,
-    width: 512,
+  model_id: "test-model",
+  track_id: "test-track",
+  prompt: "Make the woman's hair red.",
+  init_images: ["./data/woman.png"],
+  mask: "./data/mask.jpeg",
+  steps: 20,
+  width: 512,
   height: 768,
-    method: "inpainting",
-    sampler_name: "Euler a",
+  method: "inpainting",
+  sampler_name: "Euler a",
   resize_mode: 0,
-    cfg_scale: 7.5,
-    mask: "cat",
-    inpainting_fill: 0,
-    inpainting_full_res: true,
-    inpainting_full_res_padding: 0,
-    inpainting_mask_invert: false
+  cfg_scale: 7.5,
+  inpainting_fill: 0,
+  inpainting_full_res: true,
+  inpainting_full_res_padding: 0,
+  inpainting_mask_invert: false
 } as InpaintingRequest;
 
 
@@ -236,12 +251,18 @@ async function markJobComplete(receiptHandle: string): Promise<void> {
   }
 }
 
-async function fetchImageAsBase64(url: string): Promise<string> {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Failed to fetch ${url}: ${response.statusText}`);
-  const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  return buffer.toString("base64");
+async function fetchImageAsBase64(pathOrUrl: string): Promise<string> {
+  if (pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")) {
+    // Handle URL
+    const response = await fetch(pathOrUrl);
+    if (!response.ok) throw new Error(`Failed to fetch ${pathOrUrl}: ${response.statusText}`);
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer).toString("base64");
+  } else {
+    // Handle local file path
+    const fileBuffer = await fs.readFile(pathOrUrl);
+    return fileBuffer.toString("base64");
+  }
 }
 
 async function submitJob<TRequest extends AnyRequest, TResponse extends AnyResponse>(job: TRequest): Promise<TResponse> {
@@ -262,6 +283,11 @@ async function submitJob<TRequest extends AnyRequest, TResponse extends AnyRespo
     const base64Images = await Promise.all(job.init_images.map(url => fetchImageAsBase64(url)));
     // Update the job with base64 encoded images
     job = { ...job, init_images: base64Images } as TRequest;
+  }
+  if ("mask" in job) {
+    // Convert mask to base64 string
+    const base64Mask = await fetchImageAsBase64(job.mask);
+    job = { ...job, mask: base64Mask } as TRequest;
   }
 
   let adjustedJob: any = { ...job };
@@ -508,6 +534,15 @@ async function main(): Promise<void> {
     /**
      * We run a single job to verify that everything is working.
      */
+    if (METHODS.indexOf("txt2img") !== -1) {
+      response = await submitJob(txt2imgTestJob);
+    }
+    if (METHODS.indexOf("img2img") !== -1) {
+      response = await submitJob(img2imgTestJob);
+    }
+    if (METHODS.indexOf("inpainting") !== -1) {
+      response = await submitJob(inpaintingTestJob);
+    }
     response = await submitJob(txt2imgTestJob);
     const loadEnd = Date.now();
     const loadElapsed = loadEnd - loadStart;
