@@ -23,6 +23,9 @@ FROM saladtechnologies/sdnext:dynamic
 # And then copy the worker into the inference image
 COPY --from=build /app/worker ./worker
 
+# Expose test data to the inference image
+COPY data /app/data
+
 # The inference image supports
 ENV HOST='0.0.0.0'
 ENV PORT=7860

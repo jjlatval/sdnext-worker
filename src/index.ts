@@ -88,15 +88,15 @@ const img2imgTestJob: Image2ImageRequest = {
   method: "img2img",
   height: 896,
   cfg_scale: 7,
-  init_images: ["./data/woman.png"]
+  init_images: ["/app/data/woman.png"]
 } as Image2ImageRequest;
 
 const inpaintingTestJob: InpaintingRequest = {
   model_id: "test-model",
   track_id: "test-track",
   prompt: "Make the woman's hair red.",
-  init_images: ["./data/woman.png"],
-  mask: "./data/mask.jpeg",
+  init_images: ["/app/data/woman.png"],
+  mask: "/app/data/mask.jpeg",
   steps: 20,
   width: 512,
   height: 768,
