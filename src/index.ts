@@ -77,6 +77,24 @@ const txt2imgTestJob: Text2ImageRequest = {
 // TODO img2ImgTestJob
 // All models that have txt2img also have img2img endpoint, so the testing is not that crucial.
 
+const inpaintingTestJob: InpaintingRequest = {
+    model_id: "test-model",
+    track_id: "test-track",
+    prompt: "Make the cat wear a hat.",
+    steps: 20,
+    width: 512,
+  height: 768,
+    method: "inpainting",
+    sampler_name: "Euler a",
+  resize_mode: 0,
+    cfg_scale: 7.5,
+    mask: "cat",
+    inpainting_fill: 0,
+    inpainting_full_res: true,
+    inpainting_full_res_padding: 0,
+    inpainting_mask_invert: false
+} as InpaintingRequest;
+
 
 /**
  *
@@ -227,6 +245,17 @@ async function fetchImageAsBase64(url: string): Promise<string> {
 }
 
 async function submitJob<TRequest extends AnyRequest, TResponse extends AnyResponse>(job: TRequest): Promise<TResponse> {
+
+  // Validate job
+  if (!job.height || job.height <= 0 || job.height > 2048) {
+    console.log(`Invalid height ${job.height}.`);
+    return {} as TResponse;
+  }
+  if (!job.width || job.width <= 0 || job.width > 2048) {
+    console.log(`Invalid width ${job.width}.`);
+    return {} as TResponse;
+  }
+
   // Check if the job requires converting init_images URLs to base64
   if ("init_images" in job && Array.isArray(job.init_images)) {
     // Convert all init_images URLs to base64 strings
@@ -273,7 +302,7 @@ async function submitJob<TRequest extends AnyRequest, TResponse extends AnyRespo
   });
 
   if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
+    console.log(`Failed to submit job: ${response.statusText}`);
   }
   return await response.json() as Promise<TResponse>;
 }
@@ -514,7 +543,11 @@ async function main(): Promise<void> {
         // Ensure all required properties for Image2ImageRequest are provided
       } as Image2ImageRequest;
       break;
-      // Add cases for other methods as necessary
+    case "inpainting":
+      request = {
+        ...job.request,
+      } as InpaintingRequest;
+      break;
     default:
       console.error("Unsupported job method:", job.request.method);
       continue; // Skip to the next iteration if method is unsupported
