@@ -286,6 +286,8 @@ async function submitJob<TRequest extends AnyRequest, TResponse extends AnyRespo
   }
   if ("mask" in job) {
     // Convert mask to base64 string
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    //@ts-ignore
     const base64Mask = await fetchImageAsBase64(job.mask);
     job = { ...job, mask: base64Mask } as TRequest;
   }

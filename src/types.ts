@@ -10,7 +10,7 @@ interface BaseRequest {
   seed?: number;
   cfg_scale: number;
   track_id: string;
-  upload_url: string[];
+  upload_url?: string[];
 }
 
 interface BaseGenerationRequest extends BaseRequest {
@@ -21,7 +21,7 @@ export interface InpaintingRequest extends BaseRequest {
   denoising_strength?: number;
   resize_mode?: number;
   mask?: string;
-  init_images?: string;
+  init_images?: string[];
   mask_blur?: number;
   inpainting_fill?: number;
   inpainting_full_res?: boolean;
