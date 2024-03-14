@@ -642,7 +642,6 @@ async function main(): Promise<void> {
           await recordResult(fullRecord);
         }
 
-        console.log("WEBHOOK", WEBHOOK_CALLBACK_URL);
         // Now that images are uploaded and the result is recorded, notify the webhook
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         //@ts-ignore
