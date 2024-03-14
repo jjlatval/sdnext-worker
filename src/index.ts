@@ -13,7 +13,7 @@ import * as fs from "fs/promises";
 import { Buffer } from "buffer";
 
 const {
-  METHODS = ["txt2img", "img2img"],
+  METHODS = "[\"txt2img\", \"img2img\"]",
   LOAD_REFINER = "0",
   SDNEXT_URL = "http://0.0.0.0:7860",
   REPORTING_URL = "",
@@ -30,6 +30,17 @@ const {
 let modelCheckpointNames = MODEL_CHECKPOINT_NAMES;
 if (typeof MODEL_CHECKPOINT_NAMES === "string") {
   modelCheckpointNames = JSON.parse(modelCheckpointNames);
+}
+
+let methods: string [];
+try {
+  methods = JSON.parse(METHODS);
+  if (!Array.isArray(methods)) {
+    throw new Error("METHODS environment variable is not an array");
+  }
+} catch (error) {
+  console.error("Error parsing METHODS environment variable:", error);
+  process.exit(1); // Exit if we cannot parse the methods
 }
 
 interface JobRequest extends Partial<Text2ImageRequest & Image2ImageRequest & InpaintingRequest> {
@@ -330,7 +341,9 @@ async function submitJob<TRequest extends AnyRequest, TResponse extends AnyRespo
   });
 
   if (!response.ok) {
-    console.log(`Failed to submit job: ${response.statusText}`);
+    console.error(`Failed to submit job: ${response.statusText}`);
+    // Kill a misbehaving worker
+    process.exit(1);
   }
   return await response.json() as Promise<TResponse>;
 }
@@ -536,13 +549,13 @@ async function main(): Promise<void> {
     /**
      * We run a single job to verify that everything is working.
      */
-    if (METHODS.indexOf("txt2img") !== -1) {
+    if (methods.indexOf("txt2img") !== -1) {
       response = await submitJob(txt2imgTestJob);
     }
-    if (METHODS.indexOf("img2img") !== -1) {
+    if (methods.indexOf("img2img") !== -1) {
       response = await submitJob(img2imgTestJob);
     }
-    if (METHODS.indexOf("inpainting") !== -1) {
+    if (methods.indexOf("inpainting") !== -1) {
       response = await submitJob(inpaintingTestJob);
     }
     response = await submitJob(txt2imgTestJob);
