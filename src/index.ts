@@ -567,7 +567,6 @@ async function main(): Promise<void> {
     if (methods.indexOf("inpainting") !== -1) {
       response = await submitJob(inpaintingTestJob);
     }
-    response = await submitJob(txt2imgTestJob);
     const loadEnd = Date.now();
     const loadElapsed = loadEnd - loadStart;
     console.log(`Server fully warm in ${loadElapsed}ms`);
