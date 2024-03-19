@@ -257,8 +257,17 @@ async function markJobComplete(receiptHandle: string): Promise<void> {
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     //@ts-ignore
     await sqsClient.send(command);
-  } catch (error) {
-    console.error("Error deleting message:", error);
+    console.log("Message deleted successfully.");
+  } catch (error: any) {
+    // Handle specific errors if needed
+    if (error.name === "InvalidParameterValue" && error.message.includes("ReceiptHandle is invalid")) {
+      console.warn("Message deletion failed due to an expired receipt handle.");
+      // Implement retry logic here if necessary
+    } else {
+      console.error("Error deleting message:", error);
+      // You can choose to rethrow the error if necessary
+      // throw error;
+    }
   }
 }
 
