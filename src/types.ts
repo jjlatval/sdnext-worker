@@ -182,6 +182,7 @@ export type SDJob = {
   prompt: string;
   id: string;
   track_id: string;
-  batch_size: number;
+  batch_count: number;
+  batch_size?: number;
   upload_url: string[];
 };

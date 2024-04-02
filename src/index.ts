@@ -162,6 +162,34 @@ interface FullRecord {
   };
 }
 
+/**
+ * Retries an async function with exponential backoff.
+ * @param fn The async function to retry.
+ * @param retries Number of retries.
+ * @param delay Initial delay between retries in milliseconds.
+ * @param scaleFactor Factor by which to scale the delay after each retry.
+ */
+async function retryWithExponentialBackoff<T>(fn: () => Promise<T>, retries: number = 3, delay: number = 1000, scaleFactor: number = 2): Promise<T> {
+  let attempt = 0;
+  let error: any;
+
+  while (attempt < retries) {
+    try {
+      return await fn(); // Attempt the operation
+    } catch (err: any) {
+      error = err; // Save the error to rethrow if all retries fail
+      console.log(`Attempt ${attempt + 1} failed: ${err?.message}. Retrying in ${delay}ms...`);
+      await new Promise((resolve) => setTimeout(resolve, delay)); // Wait for the specified delay
+      delay *= scaleFactor; // Increase the delay for the next attempt
+      attempt++;
+    }
+  }
+
+  console.log("All retry attempts failed.");
+  throw error; // Rethrow the last error encountered
+}
+
+
 async function recordResult(record: FullRecord): Promise<void> {
   let response;
   try {
@@ -313,9 +341,10 @@ async function submitJob<TRequest extends AnyRequest, TResponse extends AnyRespo
   }
 
   let adjustedJob: any = { ...job };
+  // Prefer batch_count over batch_size in cases where VRAM is limited.
   if ("num_generations" in job) {
     const { num_generations, ...rest } = job;
-    adjustedJob = { ...rest, batch_size: num_generations };
+    adjustedJob = { ...rest, batch_count: num_generations };
   }
 
   const endpointMap: { [key: string]: string } = {
@@ -515,6 +544,19 @@ async function notifyWebhook(track_id: string, sample_images: string[]) {
     await response.json();
   } catch (error: any) {
     console.error("Failed to notify webhook:", error.message);
+    if (error.response) {
+      console.error(`Server responded with status: ${error.response.status}`);
+      try {
+        console.log("Failed request body:", JSON.stringify({
+          "track_id": track_id,
+          "sample_images": sample_images
+        }));
+        const errorBody = await error.response.text(); // or .json() if the response is JSON
+        console.error("Response body:", errorBody);
+      } catch (bodyError) {
+        console.error("Failed to parse error response body");
+      }
+    }
   }
 }
 
@@ -578,7 +620,7 @@ async function main(): Promise<void> {
 
   while (stayAlive) {
     console.log("Fetching Job...");
-    const job = await getJob();
+    const job = await retryWithExponentialBackoff(() => getJob());
 
     if (!job) {
       console.log("No jobs available. Waiting...");
@@ -616,6 +658,7 @@ async function main(): Promise<void> {
 
     console.log("Submitting Job...");
     const jobStart = Date.now();
+    // No exponential backoff tries here, it runs on localhost
     response = await submitJob(request);
     const jobEnd = Date.now();
     const jobElapsed = jobEnd - jobStart;
@@ -631,7 +674,7 @@ async function main(): Promise<void> {
     Promise.all(images.map((image, i) => {
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       //@ts-ignore
-      return uploadImage(image, job.upload_url[i]);
+      return retryWithExponentialBackoff(() => uploadImage(image, job.upload_url[i]));
     })).then(async (downloadUrls) => {
       if (downloadUrls.length === 0) {
         console.log("No download URLs");
@@ -655,16 +698,25 @@ async function main(): Promise<void> {
         //@ts-ignore
         if (WEBHOOK_CALLBACK_URL) {
           try {
-            await notifyWebhook(jobId as string, downloadUrls);
-          } catch(error) {
+            await retryWithExponentialBackoff(() => notifyWebhook(jobId as string, downloadUrls));
+          } catch(error: any) {
             console.log("Failed to notify webhook:", error);
+            if (error.response) {
+              console.error(`Server responded with status: ${error.response.status}`);
+              try {
+                const errorBody = await error.response.text(); // or .json() if the response is JSON
+                console.error("Response body:", errorBody);
+              } catch (bodyError) {
+                console.error("Failed to parse error response body");
+              }
+            }
           }
         }
       }
       return downloadUrls;
     }).then(async (downloadUrls) => {
-      await markJobComplete(job.receiptHandle);
-      prettyPrint({prompt: request.prompt, inference_time: jobElapsed, output_urls: downloadUrls});
+      await retryWithExponentialBackoff(() => markJobComplete(receiptHandle));
+      prettyPrint({prompt: request.prompt, track_id: jobId, model_id: request?.model_id, inference_time: jobElapsed, output_urls: downloadUrls});
     });
   }
 }

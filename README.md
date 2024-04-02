@@ -25,7 +25,7 @@ docker compose up
 To build the image, run the following command:
 
 ```bash
-docker buildx build -t sdnext-worker:latest --provenance=false --output type=docker .
+docker buildx build -t sdnext-worker:latest --provenance=false --output type=docker --platform=linux/amd64 .
 ```
 
 NB; this will take a while to complete. If you use e.g. MacOS, you might want to run this under `caffeinate -is`.
@@ -33,6 +33,7 @@ NB; this will take a while to complete. If you use e.g. MacOS, you might want to
 ## Publishing the image to Dockerhub
 
 ```bash
-docker tag sdnext-worker:latest <your_docker_hub_username>/sdnext-worker:latest
-docker push <your_docker_hub_username>/sdnext-worker:latest
+export DOCKERHUB_USERNAME=<your_docker_hub_username>
+docker tag sdnext-worker:latest ${DOCKERHUB_USERNAME}/sdnext-worker:latest
+docker push ${DOCKERHUB_USERNAME}/sdnext-worker:latest
 ```
