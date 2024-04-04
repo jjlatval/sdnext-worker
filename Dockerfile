@@ -18,7 +18,7 @@ RUN npm run build
 RUN npx pkg -t node18-linux-x64 --out-path ./worker .
 
 # Rebase the image to the inference server image
-FROM saladtechnologies/sdnext:dynamic
+FROM saladtechnologies/sdnext:dynamic-69bda18
 
 # And then copy the worker into the inference image
 COPY --from=build /app/worker ./worker

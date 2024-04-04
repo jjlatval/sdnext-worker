@@ -87,9 +87,6 @@ const txt2imgTestJob: Text2ImageRequest = {
   cfg_scale: 7
 } as Text2ImageRequest;
 
-// TODO img2ImgTestJob
-// All models that have txt2img also have img2img endpoint, so the testing is not that crucial.
-
 const img2imgTestJob: Image2ImageRequest = {
   model_id: "test-model",
   track_id: "test-track",
@@ -255,7 +252,7 @@ async function getJob(): Promise<JobFetchResult | null> {
       request: requestWithoutUploadUrl as JobRequest, // This line simplifies the object to its needed form
       messageId: message.MessageId!,
       receiptHandle: message.ReceiptHandle!,
-      upload_url: body.upload_url,
+      upload_url: upload_url,
     };
   } catch (error) {
     console.error("Failed to receive messages from SQS:", error);
@@ -341,10 +338,10 @@ async function submitJob<TRequest extends AnyRequest, TResponse extends AnyRespo
   }
 
   let adjustedJob: any = { ...job };
-  // Prefer batch_count over batch_size in cases where VRAM is limited.
+  // Prefer batch_count over batch_size in cases where VRAM is limited => did not work!
   if ("num_generations" in job) {
     const { num_generations, ...rest } = job;
-    adjustedJob = { ...rest, batch_count: num_generations };
+    adjustedJob = { ...rest, batch_size: num_generations };
   }
 
   const endpointMap: { [key: string]: string } = {
@@ -380,6 +377,7 @@ async function submitJob<TRequest extends AnyRequest, TResponse extends AnyRespo
 
   if (!response.ok) {
     console.error(`Failed to submit job: ${response.statusText}`);
+    console.log(`Failed job was: ${JSON.stringify(adjustedJob)}`);
     // Kill a misbehaving worker
     process.exit(1);
   }
@@ -404,7 +402,6 @@ async function uploadImage(image: string, url: string): Promise<string> {
         "Content-Type": "image/jpeg",
       },
     });
-
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
@@ -620,7 +617,7 @@ async function main(): Promise<void> {
 
   while (stayAlive) {
     console.log("Fetching Job...");
-    const job = await retryWithExponentialBackoff(() => getJob());
+    const job = await getJob();
 
     if (!job) {
       console.log("No jobs available. Waiting...");
@@ -654,7 +651,7 @@ async function main(): Promise<void> {
     }
 
 
-    const { messageId, receiptHandle, jobId } = job;
+    const { receiptHandle, jobId } = job;
 
     console.log("Submitting Job...");
     const jobStart = Date.now();
@@ -669,6 +666,11 @@ async function main(): Promise<void> {
      * while the images are uploading.
      */
     const images = response?.images || [];
+    if (images.length <= 0) {
+      console.log("No images to upload");
+      console.log("Response:", response);
+      console.log("Job", job);
+    }
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     //@ts-ignore
     Promise.all(images.map((image, i) => {
