@@ -24,7 +24,9 @@ const {
   AWS_ACCESS_KEY_ID,
   AWS_SECRET_ACCESS_KEY,
   AWS_REGION,
-  WEBHOOK_CALLBACK_URL = ""
+  WEBHOOK_CALLBACK_URL = "",
+  WEBHOOK_API_KEY = "",
+  WEBHOOK_AUTH_HEADER = "X-Api-Key"
 } = process.env;
 
 let modelCheckpointNames = MODEL_CHECKPOINT_NAMES;
@@ -527,6 +529,7 @@ async function notifyWebhook(track_id: string, sample_images: string[]) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        [WEBHOOK_AUTH_HEADER]: WEBHOOK_API_KEY
       },
       body: JSON.stringify({
         "track_id": track_id,
